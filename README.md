@@ -1,6 +1,12 @@
 # 模型资源管理器
 
-> vLLM Model Manager
+这是一个简单的`vLLM`模型资源管理器，用于管理多个模型实例，并支持动态加载和卸载模型。用途是在多用户场景下，多模型在同一GPU上运行，每个用户可以动态加载自己的模型，即时释放显存资源，而不需要担心资源竞争和内存溢出的问题。
+
+这包括两个管理器：``ModelManager``和``EngineManager``。
+
+**vLLM Model Manager**
+
+> 管理多个模型实例，支持动态加载和卸载模型。
 
 ```python
 from vllm import EngineArgs
@@ -30,7 +36,9 @@ model_manager.reset_shutdown_timer(5)
 model_manager.stop()
 ```
 
-> vLLM Serve Manager
+**vLLM Serve Manager**
+
+> 管理多个模型实例，支持动态加载和卸载以VLLM方式启动的OpenAI服务。
 
 ```python
 from lusse.models.manager import VLLMEngineArgs, ServerManager
