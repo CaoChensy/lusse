@@ -9,13 +9,14 @@ from typing import Any
 from threading import Lock
 from transformers import AutoTokenizer
 from dataclasses import asdict
-from typing import Dict, Optional
+from typing import Dict, Optional, Literal
 from vllm import LLM, EngineArgs
 from vllm.distributed.parallel_state import (
     destroy_model_parallel,
     destroy_distributed_environment,
 )
 from lusse.utils import LoggerMixin
+from lusse.models.manager.base import BaseManager
 
 
 __all__ = [
@@ -24,12 +25,13 @@ __all__ = [
 ]
 
 
-class ModelManager(LoggerMixin):
+class ModelManager(BaseManager, LoggerMixin):
     _instances: Dict[str, 'ModelManager'] = {}
     _lock: threading.Lock = threading.Lock()
 
-    def __new__(cls, model_name: str, *args, **kwargs):
-        """单例模式，每个模型名称对应一个管理器实例"""
+    def __new__(cls, engine_args: EngineArgs, model_name: Optional[str] = None, *args, **kwargs):
+        """单例模式"""
+        model_name = model_name or cls.split_model_name_from_path(model_path=engine_args.model)
         if model_name not in cls._instances:
             with cls._lock:
                 if model_name not in cls._instances:
@@ -40,25 +42,29 @@ class ModelManager(LoggerMixin):
 
     def __init__(
             self,
-            model_name: str,
             engine_args: EngineArgs,
+            model_name: Optional[str] = None,
+            auto_terminate: Literal["never", "delay", "directly"] = "delay",
+            resource_timeout: Optional[int] = 60,
             verbose: Optional[bool] = False,
-            log_file: str = "vllm_model.log",
+            log_file: Optional[str] = None,
+            **kwargs,
     ):
+        self.auto_terminate = auto_terminate
+        self.resource_timeout: int = resource_timeout
         if self._initialized:
             return
-        self.model_name = model_name
+
+        self.model_name = model_name or self.split_model_name_from_path(model_path=engine_args.model)
+        self.log_file = log_file or f"./log/{self.model_name}.log"
+
         self.engine_args = engine_args
-
         self.verbose: Optional[bool] = verbose
-        self.log_file: Optional[str] = log_file
-
         self.lock: Lock = Lock()
         self.llm: Optional[LLM] = None
         self.tokenizer: Optional[Any] = None
         self.release_timer: Optional[threading.Timer] = None
         self._initialized = True
-        self.release_timeout: int = 60
 
         self._start_logging()
 
@@ -92,21 +98,22 @@ class ModelManager(LoggerMixin):
                     self.llm = None
                     self.tokenizer = None
 
-    def reset_shutdown_timer(self, timeout: int):
+    def reset_shutdown_timer(self, timeout: Optional[int] = None):
         """重置空闲计时器"""
+        if timeout is None:
+            timeout = self.resource_timeout
         with self.lock:
             if self.release_timer:
                 self.release_timer.cancel()
                 self.info(msg=f"[{__class__.__name__}] Cancelled existing timer")
             if self.llm:
-                self.release_timeout = timeout
                 self.release_timer = threading.Timer(timeout, self._release_resources)
                 self.release_timer.start()
                 self.info(msg=f"[{__class__.__name__}] New timer started with {timeout}s")
             else:
                 self.warning(msg=f"[{__class__.__name__}] Trying to reset timer without loaded model")
 
-    def load_model(self):
+    def load_model(self) -> bool:
         """获取模型实例（自动处理加载和计时器重置）"""
         with self.lock:
             if not self.llm:
@@ -115,6 +122,7 @@ class ModelManager(LoggerMixin):
                 self.tokenizer = AutoTokenizer.from_pretrained(self.engine_args.model)
                 self.info(f"[{__class__.__name__}] Loaded model successfully: {self.model_name}")
         self.info(f"[{__class__.__name__}] Exit lock for {self.model_name}")
+        return True
 
     @property
     def remaining_time(self) -> float:
@@ -130,6 +138,20 @@ class ModelManager(LoggerMixin):
         self.info(f"[{__class__.__name__}] Shutdown model: {self.model_name}")
         if self.release_timer:
             self.release_timer.cancel()
+
+    def __enter__(self):
+        """"""
+        self.load_model()
+        if self.auto_terminate == "delay":
+            self.reset_shutdown_timer()
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """"""
+        if self.auto_terminate == "directly":
+            self.stop()
+        else:
+            pass
 
 
 def register_model_configs(config: Dict) -> Dict[str, ModelManager]:

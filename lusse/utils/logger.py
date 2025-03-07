@@ -31,7 +31,7 @@ class LoggerMixin:
     logger: Optional[Union[Logger, Callable]] = None
     verbose: Optional[bool] = False
     log_file: Optional[str] = None
-    server_name: Optional[str] = None
+    logger_name: Optional[str] = None
 
     def __del__(self):
         """对象销毁时自动清理"""
@@ -57,7 +57,7 @@ class LoggerMixin:
             self.logger.addHandler(file_handler)
         else:
             # 否则创建新logger
-            logger_name = self.server_name or __name__
+            logger_name = self.logger_name or __name__
             self.logger = Logger(logger_name, level=INFO)
             self.logger.addHandler(file_handler)
 

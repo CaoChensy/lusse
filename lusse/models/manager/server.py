@@ -7,9 +7,10 @@ import subprocess
 from openai import OpenAI
 from vllm import EngineArgs
 from dataclasses import fields, dataclass
-from typing import get_origin, get_args, Dict, Optional, Any, Union, List
+from typing import get_origin, get_args, Dict, Optional, Union, List, Literal
 from threading import Thread, Timer, Lock
 from lusse.utils import LoggerMixin
+from lusse.models.manager.base import BaseManager
 
 
 __all__ = [
@@ -19,11 +20,18 @@ __all__ = [
 
 
 @dataclass
-class VLLMEngineArgs(EngineArgs):
+class VLLMEngineArgs(BaseManager, EngineArgs):
     """"""
     port: int = 8000
     enable_auto_tool_choice: bool = False
     tool_call_parser: Optional[str] = None
+
+    def validate_serve_model_name(self, cmd: list[str]) -> list[str]:
+        """"""
+        if '--served-model-name' not in cmd:
+            cmd.append('--served-model-name')
+            cmd.append(self.split_model_name_from_path(model_path=self.model))
+        return cmd
 
     def to_command(self) -> List[str]:
         cmd = ["vllm", "serve", self.model]
@@ -52,14 +60,18 @@ class VLLMEngineArgs(EngineArgs):
                 cmd.append(f"--{name}")
                 continue
             cmd.extend([f"--{name}", str(value)])
+
+        cmd = self.validate_serve_model_name(cmd)
         return cmd
 
 
-class ServerManager(LoggerMixin):
+class ServerManager(BaseManager, LoggerMixin):
     _instances: Dict[str, 'ServerManager'] = {}
     _lock: Lock = Lock()
 
-    def __new__(cls, server_name: str, engine_args: VLLMEngineArgs, *args, **kwargs):
+    def __new__(cls, engine_args: VLLMEngineArgs, server_name: Optional[str] = None, *args, **kwargs):
+        """"""
+        server_name = server_name or cls.split_model_name_from_path(model_path=engine_args.model)
         with cls._lock:
             if server_name not in cls._instances:
                 instance = super().__new__(cls)
@@ -69,21 +81,25 @@ class ServerManager(LoggerMixin):
 
     def __init__(
             self,
-            server_name: str,
             engine_args: VLLMEngineArgs,
+            server_name: Optional[str] = None,
+            auto_terminate: Literal["never", "delay", "directly"] = "delay",
             verbose: Optional[bool] = False,
-            log_file: str = "vllm_server.log",
+            log_file: Optional[str] = None,
             resource_timeout: int = 60,
             server_startup_timeout: int = 300,
+            **kwargs,
     ):
+        self.auto_terminate = auto_terminate
+        self.resource_timeout: int = resource_timeout
         if self._initialized:
             return
 
-        self.server_name: str = server_name
+        self.server_name = server_name or self.split_model_name_from_path(model_path=engine_args.model)
+        self.log_file = log_file or f"./log/{self.server_name}.log"
+
         self.engine_args: VLLMEngineArgs = engine_args
         self.verbose: Optional[bool] = verbose
-        self.log_file: Optional[str] = log_file
-        self.resource_timeout: int = resource_timeout                # 资源回收最大时间（秒）
         self.server_startup_timeout: int = server_startup_timeout    # 服务器最大启动时间（秒）
 
         self.lock: Lock = Lock()
@@ -165,17 +181,15 @@ class ServerManager(LoggerMixin):
 
             # 等待启动完成或超时
             ready = self.ready_event.wait(timeout=self.server_startup_timeout)
-            if not ready:
-                error_msg = f"[{__class__.__name__}] Service failed to start within {self.server_startup_timeout}s"
+            if not ready or self.start_error:
+                error_msg = f"[{__class__.__name__}] Service failed to start within {self.server_startup_timeout}s, or Service startup failed: {self.start_error}"
                 self.error(error_msg)
                 self.stop()
-                raise TimeoutError(error_msg)
-
-            if self.start_error:
-                raise RuntimeError(f"[{__class__.__name__}] Service startup failed: {self.start_error}")
-
-            self.is_running = True
-            return True
+                self.is_running = False
+                return False
+            else:
+                self.is_running = True
+                return True
 
     def start_with_timeout(self, timeout: Optional[int] = None) -> bool:
         """
@@ -241,10 +255,17 @@ class ServerManager(LoggerMixin):
         self.stop()
         self.close_handlers()
 
-    # 上下文管理器支持
     def __enter__(self):
-        self.start()
+        """"""
+        if self.auto_terminate == "delay":
+            self.start_with_timeout()
+        else:
+            self.start()
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        self._cleanup()
+        """"""
+        if self.auto_terminate == "directly":
+            self._cleanup()
+        else:
+            pass
