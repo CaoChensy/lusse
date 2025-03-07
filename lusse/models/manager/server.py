@@ -120,6 +120,10 @@ class ServerManager(BaseManager, LoggerMixin):
 
     def _health_check(self) -> bool:
         """检查服务是否正常运行"""
+        if self.process is None or self.process.poll() is not None:
+            self.start_error = f"[{__class__.__name__}] Service process not running"
+            self.warning(msg=self.start_error)
+            return False
         try:
             import requests
             response = requests.get(f"http://localhost:{self.engine_args.port}/health")
@@ -133,6 +137,10 @@ class ServerManager(BaseManager, LoggerMixin):
         start_time = time.time()
 
         while time.time() - start_time < self.server_startup_timeout:
+            if self.process is None or self.process.poll() is not None:
+                self.start_error = f"[{__class__.__name__}] Service process not running, at time: {time.time() - start_time:.3f}s"
+                self.warning(msg=self.start_error)
+                break
             try:
                 if self._health_check():
                     self.info(f"[{__class__.__name__}] Health check passed")
@@ -146,7 +154,7 @@ class ServerManager(BaseManager, LoggerMixin):
         # 超时或失败时触发事件
         self.ready_event.set()
         self.error(f"[{__class__.__name__}] Health check failed. Service not responding.")
-        self.stop()
+        Thread(target=self.stop, daemon=True).start()
 
     def start(self,) -> bool:
         """启动OpenAI兼容服务（阻塞直至启动完成）
