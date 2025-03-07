@@ -157,7 +157,7 @@ class ServerManager(BaseManager, LoggerMixin):
         with self.lock:
             if self.is_running:
                 self.warning(f"[{__class__.__name__}] Service already running")
-                return True  # 已运行视为成功
+                return self.is_running  # 已运行视为成功
 
             command = self.engine_args.to_command()
 
@@ -184,12 +184,13 @@ class ServerManager(BaseManager, LoggerMixin):
             if not ready or self.start_error:
                 error_msg = f"[{__class__.__name__}] Service failed to start within {self.server_startup_timeout}s, or Service startup failed: {self.start_error}"
                 self.error(error_msg)
-                self.stop()
-                self.is_running = False
-                return False
+                need_stop = True
             else:
+                need_stop = False
                 self.is_running = True
-                return True
+        if need_stop:
+            self.stop()
+        return self.is_running
 
     def start_with_timeout(self, timeout: Optional[int] = None) -> bool:
         """
@@ -236,19 +237,20 @@ class ServerManager(BaseManager, LoggerMixin):
         with self.lock:
             if not self.is_running:
                 return
+            self.is_running = False
+            process = self.process  # 保存进程引用
+            self.process = None     # 清空进程引用
+            shutdown_timer = self.shutdown_timer
+            self.shutdown_timer = None
+        if process:
             try:
-                # 终止进程组
-                if self.process:
-                    os.killpg(os.getpgid(self.process.pid), signal.SIGTERM)
-                    self.process.wait(timeout=10)
-                    self.process = None
-                self.is_running = False
+                os.killpg(os.getpgid(process.pid), signal.SIGTERM)
+                process.wait(timeout=10)
                 self.info(f"[{__class__.__name__}] Service stopped successfully")
             except Exception as e:
                 self.error(f"[{__class__.__name__}] Error stopping service: {str(e)}")
-            finally:
-                if self.shutdown_timer:
-                    self.shutdown_timer.cancel()
+        if shutdown_timer:
+            shutdown_timer.cancel()
 
     def _cleanup(self) -> None:
         """资源清理"""
