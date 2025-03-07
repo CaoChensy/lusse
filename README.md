@@ -21,9 +21,14 @@ args = EngineArgs(
         tensor_parallel_size=1,
         enforce_eager=True,
 )
-name = "Qwen/Qwen2.5-0.5B-Instruct"
 
-model_manager = ModelManager(name, args, verbose=True)
+# easy mode
+with ModelManager(engine_args=args) as model:
+    model.load_model()
+    model.llm.generate(...)
+
+# or manual mode
+model_manager = ModelManager(args, verbose=True)
 model_manager.load_model()
 
 # 模型推理
@@ -49,17 +54,21 @@ engine_args = VLLMEngineArgs(
     tensor_parallel_size=1,
     max_model_len=8192,
     gpu_memory_utilization=0.2,
-    served_model_name="Qwen/Qwen2.5-0.5B-Instruct",
     enforce_eager=True,
     enable_auto_tool_choice=True,
     tool_call_parser="hermes",
 )
 
-serve = ServerManager(
-    "qwen_14b_server", 
-    engine_args=engine_args, 
-    log_file="./Qwen2.5-0.5B-Instruct.log", 
-    verbose=True)
+# easy mode
+with ServerManager(engine_args=engine_args) as serve:
+    client = serve.make_client()
+    messages = [{"role": "user", "content": "你好"}]
+    response = client.chat.completions.create(model="Qwen/Qwen2.5-0.5B-Instruct", messages=messages)
+    print(serve.server_name)
+    print(response.choices[0].message.content)
+
+# or manual mode
+serve = ServerManager(engine_args=engine_args, verbose=True)
 
 # 启动服务
 running = serve.start()
