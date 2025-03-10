@@ -127,3 +127,48 @@ serve.stop()
 ```
 
 -----
+
+> Examples
+
+```python
+from lusse.models.manager import VLLMEngineArgs, ServerManager
+
+engine_args = VLLMEngineArgs(
+    model="/home/models/Qwen/Qwen2.5-VL-7B-Instruct/",
+    port=8111,
+    tensor_parallel_size=1,
+    max_model_len=8192,
+    gpu_memory_utilization=0.3,
+)
+
+messages = [
+    {
+        "role": "user",
+        "content": [
+            {"type": "text", "text": "介绍图片"},
+            {
+                "type": "image_url",
+                "image_url": {
+                    "url": "https://pic3.zhimg.com/v2-6ac0e399774bde7efb391f76b7f262ca_1440w.jpg",
+                },
+            },
+        ],
+    }
+],
+
+with ServerManager(engine_args=engine_args, auto_terminate="delay", verbose=True) as serve:
+    client = serve.make_client()
+    response = client.chat.completions.create(
+        model="Qwen/Qwen2.5-VL-7B-Instruct",
+        messages=messages,
+        max_tokens=300,
+    )
+
+print(response.choices[0])
+```
+
+```text
+Choice(finish_reason='stop', index=0, logprobs=None, message=ChatCompletionMessage(content='这张图片展示了一本名为《工厂》的书籍的封面。封面上有一幅详细的插图，描绘了一个石砌的工业建筑，可能是18世纪工业革命时期常见的工厂建筑。画面中还有几个人物，似乎在从事一些与纺织或其他工业生产相关的工作。封面的标题是“水力驱动了工业革命？”作者是大卫·麦考利，译者是刘勇军。这本书属于“画给孩子的历史奇迹”系列，通过图像和故事的形式向孩子们介绍历史上的重要事件和时刻。封面上方还标注了书的出版信息，指出是由江苏凤凰少年儿童出版社出版的。', refusal=None, role='assistant', audio=None, function_call=None, tool_calls=[], reasoning_content=None), stop_reason=None)
+```
+
+----
